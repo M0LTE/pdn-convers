@@ -5,8 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <!-- xunit convention: Method_Scenario_Expectation test names. -->
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <!-- xunit convention: Method_Scenario_Expectation test names. CA1861 (hoist constant array args to
+         static readonly) is a micro-perf rule that fights inline expected-value arrays in assertions. -->
+    <NoWarn>$(NoWarn);CA1707;CA1861</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
