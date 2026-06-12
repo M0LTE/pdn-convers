@@ -7,7 +7,11 @@ namespace Convers.Console;
 /// </summary>
 public static class ConsoleVerbs
 {
-    /// <summary>The canonical verbs, in help order. Words, not conversd '/'-folklore.</summary>
+    /// <summary>
+    /// The canonical verbs, in help order. Words, not conversd '/'-folklore. <c>pers</c> is an
+    /// unambiguous prefix of <c>personal</c>, so both spellings resolve (design.md decision 9 lists
+    /// "pers/personal"); every verb's first letter is unique, so single-letter prefixes all work.
+    /// </summary>
     public static readonly IReadOnlyList<string> All =
     [
         "join",
@@ -15,6 +19,9 @@ public static class ConsoleVerbs
         "who",
         "msg",
         "topic",
+        "personal",
+        "away",
+        "invite",
         "leave",
         "quit",
         "help",
