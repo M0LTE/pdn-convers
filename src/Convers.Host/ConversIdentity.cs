@@ -1,16 +1,22 @@
 namespace Convers.Host;
 
 /// <summary>
-/// Resolves the convers node's on-air callsign. pdn's convention (packet.net
-/// <c>AppServiceSupervisor</c>; the DAPPS precedent) is that <b>an app lives at an SSID of the node
-/// callsign</b>: the supervisor injects <c>PDN_NODE_CALLSIGN</c>, and the app derives
-/// <c>&lt;node-base&gt;-&lt;ssid&gt;</c> automatically (DAPPS uses <c>&lt;nodecall&gt;-7</c>), so the
-/// owner never hand-edits a callsign. An explicit override still wins, verbatim.
+/// Resolves the convers node's on-air callsign. The <b>node-owned-callsign contract</b> is the primary
+/// path: the pdn node host is the callsign authority and injects <c>PDN_APP_CALLSIGN</c> — the exact
+/// callsign this app must bind on air, with uniqueness already guaranteed by the node. When that env var
+/// is set the app binds it verbatim and <em>skips</em> the SSID probe-walk entirely.
 /// </summary>
 /// <remarks>
-/// This resolves the <em>preferred</em> identity. The clash handling — <b>probe-walking to the next
-/// free SSID on a duplicate-socket refusal</b> at RHP bind time — lands in W5 with the RHP bind loop;
-/// this resolver only picks the starting SSID. Pure string logic, no I/O.
+/// <para>
+/// The legacy convention is the fallback for a standalone run or an older node that does not inject
+/// <c>PDN_APP_CALLSIGN</c>: pdn's older rule (packet.net <c>AppServiceSupervisor</c>; the DAPPS
+/// precedent) is that <b>an app lives at an SSID of the node callsign</b> — the supervisor injects
+/// <c>PDN_NODE_CALLSIGN</c>, and the app derives <c>&lt;node-base&gt;-&lt;ssid&gt;</c> automatically
+/// (DAPPS used <c>&lt;nodecall&gt;-7</c>; convers uses 4). An explicit config override still wins,
+/// verbatim. On that fallback path the clash handling — <b>probe-walking to the next free SSID on a
+/// duplicate-socket refusal</b> at RHP bind time — is owned by the RHP bind loop; this resolver only
+/// picks the starting SSID and signals whether the walk applies. Pure string logic, no I/O.
+/// </para>
 /// </remarks>
 public static class ConversIdentity
 {
@@ -21,7 +27,31 @@ public static class ConversIdentity
     public const string PlaceholderBase = "N0CALL";
 
     /// <summary>
-    /// Resolves the effective callsign.
+    /// Resolves the effective callsign and how to bind it, honouring the node-owned-callsign contract.
+    /// <list type="bullet">
+    /// <item>A non-blank <paramref name="appCallsign"/> (the node-injected <c>PDN_APP_CALLSIGN</c>) wins
+    /// above all: it is bound <b>verbatim</b> (normalised) with <c>ExactBind</c> = <see langword="true"/>,
+    /// so the RHP bind path skips the SSID probe-walk (the node already guarantees uniqueness).</item>
+    /// <item>Otherwise this falls back to <see cref="ResolvePreferred"/> (config override, then
+    /// <c>&lt;node-base&gt;-&lt;ssid&gt;</c>, then a placeholder) with <c>ExactBind</c> =
+    /// <see langword="false"/> — the RHP bind path probe-walks the SSID on a clash as before.</item>
+    /// </list>
+    /// </summary>
+    public static (string Callsign, bool IsPlaceholder, bool ExactBind) ResolveBinding(
+        string? appCallsign, string? overrideCallsign, string? nodeCallsign, int ssid)
+    {
+        if (!string.IsNullOrWhiteSpace(appCallsign))
+        {
+            // The node owns the callsign and guarantees uniqueness — bind it exactly, no SSID walk.
+            return (Normalise(appCallsign), false, true);
+        }
+
+        (string callsign, bool isPlaceholder) = ResolvePreferred(overrideCallsign, nodeCallsign, ssid);
+        return (callsign, isPlaceholder, false);
+    }
+
+    /// <summary>
+    /// Resolves the <em>preferred</em> callsign on the legacy fallback path (no <c>PDN_APP_CALLSIGN</c>).
     /// <list type="bullet">
     /// <item>A non-blank <paramref name="overrideCallsign"/> wins and is used verbatim (normalised) —
     /// including any SSID the owner put in it.</item>
@@ -31,7 +61,7 @@ public static class ConversIdentity
     /// </list>
     /// <paramref name="ssid"/> outside 0–15 falls back to <see cref="DefaultSsid"/>.
     /// </summary>
-    public static (string Callsign, bool IsPlaceholder) Resolve(string? overrideCallsign, string? nodeCallsign, int ssid)
+    public static (string Callsign, bool IsPlaceholder) ResolvePreferred(string? overrideCallsign, string? nodeCallsign, int ssid)
     {
         if (!string.IsNullOrWhiteSpace(overrideCallsign))
         {

@@ -50,12 +50,15 @@ public static class HostComposition
         (ConversHostConfig config, bool createdDefault) =
             ConversHostConfigFile.LoadOrCreate(stateDir, Environment.GetEnvironmentVariable);
 
-        // Auto-derive the on-air callsign from the node (pdn convention: <node-callsign>-<ssid>). An
-        // explicit config callsign wins verbatim. The RHP node link probe-walks the SSID at bind time
-        // if this one is taken (design decision 4).
+        // Resolve the on-air callsign. The node-owned-callsign contract is primary: when the node injects
+        // PDN_APP_CALLSIGN we bind it exactly (the node guarantees uniqueness — no SSID probe-walk).
+        // Otherwise we fall back to the legacy convention — an explicit config callsign wins verbatim,
+        // else <node-callsign>-<ssid> — and the RHP node link probe-walks the SSID at bind time if this
+        // one is taken (design decision 4), keeping standalone / older-node runs working.
+        string? appCallsign = Environment.GetEnvironmentVariable("PDN_APP_CALLSIGN");
         string? nodeCallsign = Environment.GetEnvironmentVariable("PDN_NODE_CALLSIGN");
-        (string callsign, bool placeholderIdentity) =
-            ConversIdentity.Resolve(config.Callsign, nodeCallsign, config.Ssid);
+        (string callsign, bool placeholderIdentity, bool exactBind) =
+            ConversIdentity.ResolveBinding(appCallsign, config.Callsign, nodeCallsign, config.Ssid);
 
         string version = typeof(HostComposition).Assembly
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is { Length: > 0 } iv
@@ -96,6 +99,7 @@ public static class HostComposition
             Host = config.Rhp.Host!,
             Port = config.Rhp.Port!.Value,
             PreferredCallsign = callsign,
+            ExactBind = exactBind,   // node-owned callsign (PDN_APP_CALLSIGN): bind exactly, skip the SSID walk
             User = config.Rhp.User,
             Pass = config.Rhp.Pass,
         };

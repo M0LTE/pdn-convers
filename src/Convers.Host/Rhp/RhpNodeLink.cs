@@ -17,9 +17,19 @@ public sealed record RhpLinkOptions
 
     /// <summary>
     /// The preferred callsign to bind (with its SSID). On a duplicate/in-use refusal the link
-    /// probe-walks the SSID (0–15) from this one until a free SSID binds (design decision 4).
+    /// probe-walks the SSID (0–15) from this one until a free SSID binds (design decision 4) — unless
+    /// <see cref="ExactBind"/> is set.
     /// </summary>
     public required string PreferredCallsign { get; init; }
+
+    /// <summary>
+    /// Bind <see cref="PreferredCallsign"/> <b>exactly</b>, with no SSID probe-walk. Set when the node
+    /// owns the callsign (the <c>PDN_APP_CALLSIGN</c> contract) and has already guaranteed uniqueness:
+    /// the SSID is the node's choice and must not be silently changed. A refusal then surfaces as a bind
+    /// failure (and the link reconnects/retries) rather than grabbing a different SSID. Default false —
+    /// the legacy auto-derive path keeps probe-walking.
+    /// </summary>
+    public bool ExactBind { get; init; }
 
     /// <summary>Auth user, when the node requires auth.</summary>
     public string? User { get; init; }
@@ -114,9 +124,10 @@ public sealed class RhpNodeLink : IAsyncDisposable
 
                 int listener = await client.SocketAsync(ProtocolFamily.Ax25, SocketMode.Stream, cancellationToken).ConfigureAwait(false);
 
-                // SSID probe-walk: bind the preferred callsign, stepping the SSID on a duplicate/in-use
-                // refusal until one binds (design decision 4 — the part earlier waves deferred to here).
-                string bound = await BindWalkingSsidAsync(client, listener, cancellationToken).ConfigureAwait(false);
+                // Bind the callsign. Under the node-owned-callsign contract (ExactBind) we bind exactly
+                // the node-chosen callsign — no SSID probe-walk, the node guarantees uniqueness. Otherwise
+                // we probe-walk the SSID on a duplicate/in-use refusal until one binds (design decision 4).
+                string bound = await BindAsync(client, listener, cancellationToken).ConfigureAwait(false);
                 await client.ListenAsync(listener, OpenFlags.Passive, cancellationToken).ConfigureAwait(false);
 
                 BoundCallsign = bound;
@@ -174,12 +185,21 @@ public sealed class RhpNodeLink : IAsyncDisposable
     }
 
     /// <summary>
-    /// Binds <paramref name="listener"/> to the preferred callsign, probe-walking the SSID (0–15) on a
-    /// duplicate/in-use refusal until one binds. Returns the callsign that bound. Throws the original
-    /// refusal once every SSID 0–15 has been tried, or immediately for a non-in-use error.
+    /// Binds <paramref name="listener"/> to the convers callsign. Under <see cref="RhpLinkOptions.ExactBind"/>
+    /// (the node-owned-callsign contract) it binds <see cref="RhpLinkOptions.PreferredCallsign"/> exactly,
+    /// letting any refusal propagate (no SSID walk — the node owns the callsign). Otherwise it probe-walks
+    /// the SSID (0–15) on a duplicate/in-use refusal until one binds. Returns the callsign that bound.
     /// </summary>
-    private async Task<string> BindWalkingSsidAsync(RhpClient client, int listener, CancellationToken cancellationToken)
+    private async Task<string> BindAsync(RhpClient client, int listener, CancellationToken cancellationToken)
     {
+        if (_options.ExactBind)
+        {
+            // The node owns the callsign and guarantees uniqueness — bind it verbatim, no walk. A refusal
+            // propagates and the link reconnects/retries rather than silently binding a different SSID.
+            await client.BindAsync(listener, _options.PreferredCallsign, port: null, cancellationToken).ConfigureAwait(false);
+            return _options.PreferredCallsign;
+        }
+
         RhpServerException? last = null;
         foreach (string candidate in SsidProbeWalk.Candidates(_options.PreferredCallsign))
         {
